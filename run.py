@@ -64,10 +64,11 @@ if __name__ == "__main__":
                 output_dir += f"_{k.lower()}{v}"
 
         write_f(absolute_paths, output_dir)
+        flow = run.get("flow", "impl")
 
         # basic vivado command format
         # cmd = f"vivado -mode batch -source vivado.tcl -tclargs -part {board} -top {top} -out {output_dir} -synth \"{synth_args}\"> build/{output_dir}/run.log" 
-        cmd = f"make vivado TOP={top} OUTDIR={output_dir} SYNTH_ARGS=\"{synth_args}\""
+        cmd = f"make vivado TOP={top} OUTDIR={output_dir} RUN={flow} SYNTH_ARGS=\"{synth_args}\""
         commands.append(cmd)
 
     # Create a pool with 4 worker processes
