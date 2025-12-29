@@ -31,6 +31,22 @@ proc read_f {filename} {
     close $fp
 }
 
+proc load_files {files output_dir} {
+    if {[file extension $files] eq ".f"} {
+        read_f $files
+    } elseif {$files != ""} {
+        # this option is only to run vivado.tcl directly
+        read_rtl $files
+    } elseif {[file exists $output_dir/synth.f]} {
+        read_f $output_dir/synth.f
+    } else {
+        puts "ERROR: no files loaded"
+        puts $output_dir/synth.f
+    }
+
+    update_compile_order -fileset sources_1
+}
+
 proc get_generics {input_string} {
     set result ""
 
@@ -46,4 +62,31 @@ proc get_generics {input_string} {
     }
 
     return $result
+}
+
+# utility: mark success/failure
+proc mark_success {path} {
+    set fh [open $path "w"]
+    puts $fh "ok"
+    close $fh
+}
+proc remove_if_exists {path} {
+    if {[file exists $path]} { file delete -force $path }
+}
+
+proc ensure_top {top} {
+    if {$top eq ""} {
+        error "Top module/entity name is required (-top)."
+    }
+}
+
+proc maybe_create_clock {clk_ns} {
+    # Only add a default clock if a 'clk' port exists; skip otherwise.
+    set p [get_ports -quiet clk]
+    if {[llength $p] > 0} {
+        catch { delete_clocks [get_clocks -quiet clk] }
+        create_clock -name clk -period $clk_ns $p
+    } else {
+        puts "INFO: no top-level port named 'clk' found; skipping create_clock."
+    }
 }

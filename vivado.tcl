@@ -1,8 +1,8 @@
-# vivado -mode batch -source script.tcl -tclargs "FPGA=115-2"
+# vivado -mode batch -source vivado.tcl -tclargs "FPGA=115-2"
 package require cmdline
-package require try 
+package require try
 
-source common.tcl 
+source common.tcl
 
 # Define command line options
 set options {
@@ -25,22 +25,20 @@ try {
     exit 1
 }
 
-# 4 build stages - add elaborate?
-# project - create a new project - this uses project mode while the rest of the options use non-project mode
-# synth - run out of context synthesis
-# impl - run out of context implementation
-# bts - run full flow until bitstream generation w/o out-of-context
-
-set run_options [dict create prj 0 synth 1 impl 2 bts 3]
-set run [dict get $run_options $params(run)]
-
 set part $params(part)
 set files $params(f)
 set top $params(top)
 set clk $params(clk)
-set output_dir build/$params(out)
+set runmode $params(run)
+set outname $params(out)
 
+if {$outname eq ""} {
+    set outname $top
+}
+
+set output_dir  [file normalize "build/$outname"]
 file mkdir $output_dir
+set done_file "$output_dir/done"
 
 # create_project [‑part <arg>] [‑force] [‑in_memory] [‑ip] [‑rtl_kernel][‑quiet] [‑verbose] [<name>] [<dir>]
 set prj_cmd "create_project -quiet -part $part $top $output_dir"
@@ -63,6 +61,9 @@ set generate_cmd "generate_target -verbose all \[get_ips\]"
 #  [‑global_retiming <arg>] [‑no_srlextract] [‑assert] [‑no_timing_driven]
 #  [‑sfcu] [‑debug_log] [‑rtl_block_model] [‑quiet] [‑verbose]
 set synth_cmd "synth_design -top $top"
+if {$params(synth) ne ""} {
+    append synth_cmd " " $params(synth)
+}
 
 # opt_design [‑retarget] [‑propconst] [‑sweep] [‑bram_power_opt] [‑remap]
 #  [‑aggressive_remap] [‑resynth_remap] [‑resynth_area]
@@ -85,74 +86,109 @@ set place_cmd "place_design"
 #  [‑quiet] [‑verbose]
 set route_cmd "route_design"
 
-set in_memory 0
-puts "run option is $params(run)"
-if {$params(run) ne "prj"} {
+remove_if_exists $done_file
+
+try {
     set in_memory 1
-    append prj_cmd " -in_memory"
+    if {$runmode eq "prj"} { set in_memory 0 }
+    if {$in_memory} {
+        append prj_cmd " -in_memory"
+    }
+
+    puts "INFO: creating project: $prj_cmd"
+    eval $prj_cmd
+
+    # Load sources
+    load_files $files $output_dir
+
+    switch -- $runmode {
+        "prj" {
+            # Just set properties and exit; no build
+            if {$top ne ""} {
+                set_property top $top [current_fileset]
+            }
+            # Try to resolve IPs (if any were read from .f)
+            catch { eval "generate_target -verbose all \[get_ips\]" }
+            puts "INFO: project setup complete."
+        }
+
+        "sim" {
+            ensure_top $top
+            # If a sim fileset exists, set top there as well
+            if {[llength [get_filesets -quiet sim_1]]} {
+                set_property top $top [get_filesets sim_1]
+            } else {
+                create_fileset -simset sim_1
+                set_property top $top [get_filesets sim_1]
+            }
+
+            puts "INFO: launching simulation (batch, run -all)"
+            # Vivado sim defaults to xsim; assume tb is in the sources/.f
+            launch_simulation
+            run -all
+            # close_simulation may fail if already closed; ignore
+            catch { close_sim }
+            puts "INFO: simulation completed."
+        }
+
+        "synth" {
+            ensure_top $top
+            # Out-of-context synth
+            append synth_cmd " -mode out_of_context"
+            puts "INFO: running: $synth_cmd"
+            eval $synth_cmd
+            maybe_create_clock $clk
+            # Reports
+            report_utilization -hierarchical -file "$output_dir/utilization_synth.txt"
+            report_timing_summary -file "$output_dir/timing_synth.txt" -warn_on_violation
+            write_checkpoint -force "$output_dir/post_synth.dcp"
+        }
+
+        "impl" {
+            ensure_top $top
+            # OOC synth + opt/place/route
+            append synth_cmd " -mode out_of_context"
+            puts "INFO: running: $synth_cmd"
+            eval $synth_cmd
+            maybe_create_clock $clk
+            eval $opt_cmd
+            eval $place_cmd
+            eval $route_cmd
+            # Reports
+            report_utilization -hierarchical -file "$output_dir/utilization_impl.txt"
+            report_timing_summary -file "$output_dir/timing_impl.txt" -warn_on_violation
+            write_checkpoint -force "$output_dir/post_route_impl.dcp"
+        }
+
+        "bts" {
+            ensure_top $top
+            # Full non-OOC flow to bitstream
+            puts "INFO: running: $synth_cmd"
+            eval $synth_cmd
+            maybe_create_clock $clk
+            eval $opt_cmd
+            eval $place_cmd
+            eval $route_cmd
+            # Reports + bitstream
+            report_utilization -hierarchical -file "$output_dir/utilization_bts.txt"
+            report_timing_summary -file "$output_dir/timing_bts.txt" -warn_on_violation
+            write_checkpoint -force "$output_dir/post_route_bts.dcp"
+            write_bitstream -force "$output_dir/$top.bit"
+        }
+
+        default {
+            error "Unknown -run mode: $runmode (expected prj|synth|impl|bts|sim)"
+        }
+    }
+
+    # Success marker
+    mark_success $done_file
+    exit 0
+
+} on error {e opts} {
+    puts "ERROR: $e"
+    puts [dict get $opts -errorinfo]
+    # Ensure 'done' is not present on failure
+    remove_if_exists $done_file
+    exit 2
 }
-
-# good to add non ooc impl mode?
-set ooc 0 
-if {$params(run) ne "bts"} {
-    set ooc 1
-    append synth_cmd " -mode out_of_context"
-}
-
-set dcp 0
-
-if {$params(synth) ne ""} {
-    append synth_cmd " " $params(synth)
-}
-
-puts "running $prj_cmd"
-eval $prj_cmd
-
-# if -f option is used, use the file given in the option
-# else check if synth.f file exists in the output directory - this is generated by the python script
-if {[file extension $params(f)] eq ".f"} {
-    read_f $params(f)
-} elseif {$params(f) != ""} {
-    # this option is only to run vivado.tcl directly
-    read_rtl $params(f)
-} elseif {[file exists $output_dir/synth.f]} {
-    read_f $output_dir/synth.f
-} else {
-    puts "ERROR: no files loaded"
-    puts $output_dir/synth.f
-}
-
-update_compile_order -fileset sources_1
-
-if {$run > 0} {
-    puts "running $synth_cmd"    
-    eval $synth_cmd
-}
-
-if {$dcp == 1} {
-    write_checkpoint -force $output_dir/post_synth.dcp
-}
-
-# > $output_dir/synth.log
-# this is assuming the clock port is declared as "clk" or starts with clk
-if {[get_ports clk] != ""} {
-    create_clock -name clk -period $clk [get_ports clk]
-} else {
-    puts "no clocks found"
-}
-
-if {$run > 1} {
-    eval $opt_cmd
-    eval $place_cmd
-    eval $route_cmd
-}
-
-if {$dcp == 1} {
-    write_checkpoint -force $output_dir/post_route.dcp
-}
-
-# TODO: better reporting?
-report_utilization -hierarchical > $output_dir/utilization.txt
-
-puts "outdir = $output_dir"
-close [open $output_dir/done a]
