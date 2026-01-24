@@ -137,7 +137,7 @@ def _build_one_task(task: tuple[dict, dict]) -> tuple[str, int]:
     force = ctx.get("force", False)
 
     top = run["top"]
-    clk = run["clk"]
+    clk = str(run["clk"])
     files_rel = run.get("files", [])
     files_abs = [os.path.join(ydir, f) for f in files_rel]
     missing = [f for f in files_abs if not os.path.isfile(f)]
@@ -169,6 +169,8 @@ def _build_one_task(task: tuple[dict, dict]) -> tuple[str, int]:
         "-log",
         os.path.join(out_arg, "vivado.log"),
         "-tclargs",
+        "-clk",
+        clk,
         "-part",
         board,
         "-top",
