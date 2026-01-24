@@ -96,6 +96,7 @@ try {
             # Mode-specific reports
             report_utilization -hierarchical -file "$output_dir/utilization_synth.txt"
             report_timing_summary -file "$output_dir/timing_synth.txt" -warn_on_violation
+            write_timing_metrics $output_dir $clk
             write_checkpoint -force "$output_dir/post_synth.dcp"
         }
         "impl" {
@@ -110,6 +111,7 @@ try {
             # Mode-specific reports
             report_utilization -hierarchical -file "$output_dir/utilization_impl.txt"
             report_timing_summary -file "$output_dir/timing_impl.txt" -warn_on_violation
+            write_timing_metrics $output_dir $clk
             write_checkpoint -force "$output_dir/post_route_impl.dcp"
         }
         "bts" {
@@ -123,6 +125,7 @@ try {
             # Mode-specific reports
             report_utilization -hierarchical -file "$output_dir/utilization_bts.txt"
             report_timing_summary -file "$output_dir/timing_bts.txt" -warn_on_violation
+            write_timing_metrics $output_dir $clk
             write_checkpoint -force "$output_dir/post_route_bts.dcp"
             write_bitstream -force "$output_dir/$top.bit"
         }

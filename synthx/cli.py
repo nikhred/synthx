@@ -130,10 +130,40 @@ def main(argv=None) -> int:
         print(f"Wrote template YAML to {args.file}")
         return 0
     if args.cmd == "report":
-        # Walk root for mode-suffixed utilization files; prefer impl > synth > bts
-        results = []
-        headers_out = None
+        # Grouped report: group rows by Instance, list metrics per parameter set
         pref = ["utilization_impl.txt", "utilization_synth.txt", "utilization_bts.txt"]
+        groups: dict[str, dict] = {}
+
+        def read_fmax(run_dir: str) -> str:
+            tjson = os.path.join(run_dir, "timing_metrics.json")
+            if os.path.isfile(tjson):
+                try:
+                    import json
+                    with open(tjson, "r") as f:
+                        tdata = json.load(f)
+                    fm = tdata.get("fmax_mhz")
+                    if isinstance(fm, (int, float)):
+                        return f"{fm:.2f}"
+                except Exception:
+                    return ""
+            return ""
+
+        def read_params(run_dir: str) -> str:
+            mpath = os.path.join(run_dir, "build_manifest.json")
+            try:
+                import json
+                with open(mpath, "r") as f:
+                    m = json.load(f)
+                gen = m.get("run", {}).get("generics", {}) or {}
+                if not gen:
+                    return "-"
+                parts = []
+                for k in sorted(gen.keys()):
+                    parts.append(f"{k}={gen[k]}")
+                return ",".join(parts)
+            except Exception:
+                return "-"
+
         for root, dirs, files in os.walk(args.root):
             chosen = None
             for name in pref:
@@ -143,38 +173,51 @@ def main(argv=None) -> int:
             if not chosen:
                 continue
             headers, top_row = _parse_utilization_file(chosen)
-            if headers and top_row:
-                if headers_out is None:
-                    headers_out = ["Directory"] + headers
-                results.append([os.path.basename(root)] + top_row)
-        if not results:
+            if not (headers and top_row):
+                continue
+
+            # Build index map and extract instance
+            idx = {h: i for i, h in enumerate(headers)}
+            inst_col = idx.get("Instance")
+            if inst_col is None:
+                continue
+            instance = top_row[inst_col]
+
+            # Select metrics with short names
+            metric_order = [
+                ("Total LUTs", "LUTs"),
+                ("FFs", "FFs"),
+                ("SRLs", "SRLs"),
+                ("RAMB36", "BRAM36"),
+                ("RAMB18", "BRAM18"),
+                ("URAM", "URAM"),
+                ("DSP Blocks", "DSPs"),
+            ]
+            headers_out = ["Params"]
+            values = []
+            for long, short in metric_order:
+                if long in idx:
+                    headers_out.append(short)
+                    values.append(top_row[idx[long]])
+
+            # Add Fmax
+            headers_out.append("Fmax (MHz)")
+            row = [read_params(root)] + values + [read_fmax(root)]
+
+            g = groups.setdefault(instance, {"headers": headers_out, "rows": []})
+            g["rows"].append(row)
+
+        if not groups:
             print("No utilization data found.")
             return 1
-        # Sort by Module column if present, else by Directory
-        sort_idx = 0  # Directory
-        if headers_out:
-            try:
-                sort_idx = headers_out.index("Directory")
-            except ValueError:
-                try:
-                    sort_idx = headers_out.index("Instance")
-                except ValueError:
-                    sort_idx = 0
-        results.sort(key=lambda r: str(r[sort_idx]).lower())
 
-        print(tabulate(results, headers=headers_out, tablefmt="grid"))
-        if args.csv:
-            try:
-                import csv
-
-                with open(args.csv, "w", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(headers_out)
-                    writer.writerows(results)
-                print(f"Wrote CSV to {args.csv}")
-            except Exception as e:
-                print(f"Failed writing CSV: {e}", file=sys.stderr)
-                return 2
+        # Print grouped tables sorted by instance; rows sorted by Params
+        for instance in sorted(groups.keys(), key=str.lower):
+            g = groups[instance]
+            g["rows"].sort(key=lambda r: r[0])
+            print(f"Instance: {instance}")
+            print(tabulate(g["rows"], headers=g["headers"], tablefmt="grid"))
+            print()
         return 0
 
     parser.error("Unknown command")

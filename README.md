@@ -18,6 +18,7 @@ synthx version
 synthx init --file build.yaml
 
 # Summarize utilization across runs (auto-detects utilization_impl/synth/bts reports)
+# Adds Fmax (MHz) using timing_metrics.json produced by Vivado
 synthx report --root examples/build
 ```
 

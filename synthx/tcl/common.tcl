@@ -82,3 +82,41 @@ proc maybe_create_clock {clk_ns} {
     }
 }
 
+# Write timing metrics JSON: WNS (ns), period (ns), and Fmax (MHz)
+proc write_timing_metrics {output_dir clk_ns} {
+    set wns ""
+    # Try to get worst setup path slack for any clock (prefer 'clk' if present)
+    set clk_obj [get_clocks -quiet clk]
+    if {[llength $clk_obj] > 0} {
+        set paths [get_timing_paths -quiet -setup -to $clk_obj -nworst 1]
+    } else {
+        set paths [get_timing_paths -quiet -setup -nworst 1]
+    }
+    if {[llength $paths] > 0} {
+        set wns [get_property SLACK [lindex $paths 0]]
+    } else {
+        set wns ""
+    }
+    # Compute Fmax from period and WNS when available
+    set period_ns $clk_ns
+    set fmax_mhz ""
+    if {$wns ne ""} {
+        # New period is period - wns
+        set new_period [expr {$period_ns - double($wns)}]
+        if {$new_period > 0} {
+            set fmax_mhz [expr {1000.0 / $new_period}]
+        }
+    }
+    # Write JSON
+    set fh [open "$output_dir/timing_metrics.json" "w"]
+    puts $fh "{"
+    puts $fh "  \"wns_ns\": [format %.6f $wns],"
+    puts $fh "  \"period_ns\": [format %.6f $period_ns],"
+    if {$fmax_mhz ne ""} {
+        puts $fh "  \"fmax_mhz\": [format %.3f $fmax_mhz]"
+    } else {
+        puts $fh "  \"fmax_mhz\": null"
+    }
+    puts $fh "}"
+    close $fh
+}
