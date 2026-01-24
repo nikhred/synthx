@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "synthx"
+version = "0.1.0"
+description = "Vivado OOC synth/sim runner with YAML config"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "synthx" }]
+dependencies = [
+  "PyYAML>=6.0",
+  "tabulate>=0.9",
+]
+
+[project.urls]
+Homepage = "https://gatefoundry.com/synthx"
+
+[project.scripts]
+synthx = "synthx.cli:main"
+
+[tool.setuptools]
+packages = { find = { where = ["."] } }
+include-package-data = true
+
+[tool.setuptools.package-data]
+synthx = ["tcl/*.tcl"]
+
